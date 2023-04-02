@@ -96,9 +96,17 @@ def firefox_driver(obj_for_driver):
 def send_letter(driver: webdriver.Firefox, vac: Vacancy):
     driver.get(vac.link)
     experience = driver.find_element(By.XPATH, '/html/body/div[5]/div/div[3]/div[1]/div/div/div/div/div[1]/div[1]/div[1]/div/p[1]/span').text
-    if experience == '1–3':
+    button = driver.find_element(By.XPATH, '/html/body/div[5]/div/div[3]/div[1]/div/div/div/div/div[1]/div[1]/div[1]/div/div[3]/div[3]/div/div/a/span')
+    if button.text == "Откликнуться" and experience == '1–3':
         button = driver.find_element(By.XPATH, '/html/body/div[5]/div/div[3]/div[1]/div/div/div/div/div[1]/div[1]/div[1]/div/div[3]/div[2]/div/div[1]/a')
         button.click()
+        resume = driver.find_element(By.XPATH, '/html/body/div[15]/div/div[1]/div[2]/div[1]/form/div/div/div[2]/div[2]/div/div')
+        resume.click()
+        letter_btn = driver.find_element(By.XPATH, '/html/body/div[15]/div/div[1]/div[2]/div[1]/form/div/div/div[3]/button')
+        letter_btn.click()
+        driver.find_element(By.XPATH, '/html/body/div[15]/div/div[1]/div[2]/div[1]/form/div/div/textarea').send_keys(letter)
+        apply = driver.find_element(By.XPATH, '/html/body/div[15]/div/div[1]/div[5]/button[2]')
+        apply.click()
 
 
 def main():
