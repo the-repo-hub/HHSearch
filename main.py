@@ -1,3 +1,4 @@
+import time
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 import asyncio
@@ -5,7 +6,7 @@ import ast
 import bs4
 import aiohttp
 import threading
-
+from selenium.common.exceptions import NoSuchElementException
 
 vacancies_url = 'https://spb.hh.ru/search/vacancy?resume=c6f3d876ff0ba2033d0039ed1f6a6f4e386247&search_field=company_name&search_field=description&search_field=name&forceFiltersSaving=true&enable_snippets=false&salary=80000&from=resumelist'
 headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:110.0) Gecko/20100101 Firefox/110.0'}
@@ -69,15 +70,19 @@ async def generate_queries():
 
     async with aiohttp.ClientSession(headers=headers, cookies=aiocookies) as session:
         first_page = await session.get(vacancies_url)
-        num = int(bs4.BeautifulSoup(await first_page.text(), 'lxml').find(attrs={'data-qa': "pager-block"}).find_all('span', attrs={
-            'class': ['pager-item-not-in-short-range']})[-1].find('a', attrs={'data-qa': "pager-page"}).text)
+        num = int(
+            bs4.BeautifulSoup(await first_page.text(), 'html.parser').find(attrs={'data-qa': "pager-block"}).find_all('span',
+                                                                                                               attrs={
+                                                                                                                   'class': [
+                                                                                                                       'pager-item-not-in-short-range']})[
+                -1].find('a', attrs={'data-qa': "pager-page"}).text)
         print(f'Pages: {num}')
         for i in range(1, num + 1):
             gather.append(session.get(vacancies_url + f'&page={i}'))
         gather = await asyncio.gather(*gather)
         gather.append(first_page)
         for g in gather:
-            vacancies = bs4.BeautifulSoup(await g.text(), 'lxml').find_all(class_="serp-item")
+            vacancies = bs4.BeautifulSoup(await g.text(), 'html.parser').find_all(class_="serp-item")
             for vac in vacancies:
                 Vacancy(vac)
     print(f'Got {len(Vacancy.all)} vacancies')
@@ -95,31 +100,54 @@ def firefox_driver(obj_for_driver):
 
 def send_letter(driver: webdriver.Firefox, vac: Vacancy):
     driver.get(vac.link)
-    experience = driver.find_element(By.XPATH, '/html/body/div[5]/div/div[3]/div[1]/div/div/div/div/div[1]/div[1]/div[1]/div/p[1]/span').text
-    button = driver.find_element(By.XPATH, '/html/body/div[5]/div/div[3]/div[1]/div/div/div/div/div[1]/div[1]/div[1]/div/div[3]/div[3]/div/div/a/span')
-    if button.text == "Откликнуться" and experience == '1–3':
-        button = driver.find_element(By.XPATH, '/html/body/div[5]/div/div[3]/div[1]/div/div/div/div/div[1]/div[1]/div[1]/div/div[3]/div[2]/div/div[1]/a')
+    time.sleep(1)
+    print(f'On {vac.name} page. Link: {vac.link}')
+    try:
+        experience = driver.find_element(By.XPATH,
+                                         '/html/body/div[5]/div/div[3]/div[1]/div/div/div/div/div[1]/div[1]/div[1]/div/p[1]/span').text
+    except NoSuchElementException:
+        experience = driver.find_element(By.XPATH, '/html/body/div[4]/div/div[3]/div[1]/div/div/div/div/div[1]/div[1]/div[1]/div/p[1]/span').text
+
+    try:
+        button = driver.find_element(By.XPATH,
+                                     '/html/body/div[5]/div/div[3]/div[1]/div/div/div/div/div[1]/div[1]/div[1]/div/div[3]/div[3]/div/div/a')
+    except NoSuchElementException:
+        button = driver.find_element(By.XPATH,
+                            '/html/body/div[5]/div/div[3]/div[1]/div/div/div/div/div[1]/div[1]/div[1]/div/div[3]/div[2]/div/div/a')
+
+    if button.text != "Откликнуться":
+        print(f'Failed! Reason: button == {button.text}')
+
+    elif experience != '1–3 года':
+        print(f'Failed! Reason: experience == {experience}')
+
+    else:
         button.click()
-        resume = driver.find_element(By.XPATH, '/html/body/div[15]/div/div[1]/div[2]/div[1]/form/div/div/div[2]/div[2]/div/div')
-        resume.click()
-        letter_btn = driver.find_element(By.XPATH, '/html/body/div[15]/div/div[1]/div[2]/div[1]/form/div/div/div[3]/button')
+        summary = driver.find_element(By.XPATH,
+                                     '/html/body/div[15]/div/div[1]/div[2]/div[1]/form/div/div/div[2]/div[2]/div/div')
+        if summary.text != 'Программист Python':
+            summary = driver.find_element(By.XPATH, '/html/body/div[5]/div/div[3]/div[1]/div/div/div[2]/div/form/div/div[1]/div[2]/div[1]/div[1]/div/label/span')
+        summary.click()
+        letter_btn = driver.find_element(By.XPATH,
+                                         '/html/body/div[15]/div/div[1]/div[2]/div[1]/form/div/div/div[3]/button')
         letter_btn.click()
-        driver.find_element(By.XPATH, '/html/body/div[15]/div/div[1]/div[2]/div[1]/form/div/div/textarea').send_keys(letter)
+        driver.find_element(By.XPATH, '/html/body/div[15]/div/div[1]/div[2]/div[1]/form/div/div/textarea').send_keys(
+            letter)
         apply = driver.find_element(By.XPATH, '/html/body/div[15]/div/div[1]/div[5]/button[2]')
-        apply.click()
+        d = 3
+        #apply.click()
 
 
 def main():
     obj_for_driver = {}
     t1 = threading.Thread(target=firefox_driver, args=(obj_for_driver,))
     t1.start()
-    # asyncio.run(generate_queries())
+    asyncio.run(generate_queries())
     t1.join()
-    obj_for_driver['driver'].get('https://spb.hh.ru/vacancy/72216524?from=vacancy_search_list')
+    obj_for_driver['driver'].get('https://spb.hh.ru/vacancy/78573234?from=vacancy_search_list')
     for vac in Vacancy.all:
         send_letter(obj_for_driver['driver'], vac)
 
 
 if __name__ == '__main__':
     main()
-
