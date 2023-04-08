@@ -35,6 +35,10 @@ class TestCase(unittest.TestCase):
         vac = PseudoVacs('Backend Developer (Junior+/Middle)', 'https://hh.ru/vacancy/78741079?hhtmFrom=chat')
         self.assertEqual(send_letter(obj_dict['driver'], vac), 'Already responded')
 
+    def test_accepted(self):
+        vac = PseudoVacs('Системный программист (Linux)', 'https://spb.hh.ru/vacancy/76289848?hhtmFrom=chat')
+        self.assertEqual(send_letter(obj_dict['driver'], vac), 'Already responded')
+
 
 if __name__ == '__main__':
     unittest.main()
