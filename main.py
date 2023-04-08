@@ -1,4 +1,3 @@
-import time
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 import asyncio
@@ -6,14 +5,19 @@ import ast
 import bs4
 import aiohttp
 import threading
-from selenium.common.exceptions import NoSuchElementException
+from selenium.common.exceptions import NoSuchElementException, ElementNotInteractableException
+import os
+from typing import Union
 
-vacancies_url = 'https://spb.hh.ru/search/vacancy?resume=c6f3d876ff0ba2033d0039ed1f6a6f4e386247&search_field=company_name&search_field=description&search_field=name&forceFiltersSaving=true&enable_snippets=false&salary=80000&from=resumelist'
+
+vacancies_url = 'https://spb.hh.ru/search/vacancy?experience=between1And3&resume=c6f3d876ff0ba2033d0039ed1f6a6f4e386247&search_field=name&search_field=company_name&search_field=description&forceFiltersSaving=true&enable_snippets=false&salary=60000&ored_clusters=true'
 headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:110.0) Gecko/20100101 Firefox/110.0'}
+obj_dict = {'untypical': []}
+
 
 try:
-    with open('cookies.txt') as file:
-        cookies = ast.literal_eval(file.read())
+    with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cookies.txt')) as cookies_file:
+        cookies = ast.literal_eval(cookies_file.read())
         aiocookies = {}
         for c in cookies:
             aiocookies[c['name']] = c['value']
@@ -23,23 +27,32 @@ except SyntaxError:
     exit('Invalid cookies!')
 
 try:
-    with open('letter.txt') as file:
+    with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'letter.txt')) as file:
         letter = file.read()
 except FileNotFoundError:
     exit("You need write a letter and put it in letter.txt!")
 
 
-class Vacancy:
-    all = []
-    ALLOW_WORDS = ['Python']
-    DENY_WORDS = ['Senior', 'Lead', 'Нейрон', 'Лид', 'Детей', 'Преподаватель', 'Наставник']
+def up_low(lst):
+    res = []
+    for string in lst:
+        res.extend([string.upper(), string.lower()])
+    return lst + res
 
-    ALLOW_WORDS += list(map(lambda s: s.lower(), ALLOW_WORDS))
-    DENY_WORDS += list(map(lambda s: s.lower(), DENY_WORDS))
+
+class Vacancy:
+    all = {}
+    VACANCY_FOR_SEND = 'Программист Python'
+
+    ALLOW_WORDS = up_low(['Python'])
+    DENY_WORDS = up_low(['Senior', 'Lead', 'Нейрон', 'Лид', 'Детей', 'Преподаватель', 'Наставник', 'Автор', 'Репетитор'])
 
     def __init__(self, soup: bs4.Tag):
         self.name = soup.find('a', class_="serp-item__title").text
         self.link = soup.find('a', class_="serp-item__title").get('href')
+        self.id = int(self.link.split('?')[0].split('/')[-1])
+        if self.all.get(self.id):
+            return
         try:
             self.salary = soup.find('span', class_="bloko-header-section-3").text
         except AttributeError:
@@ -58,7 +71,7 @@ class Vacancy:
                     if deny in self.name:
                         flag = False
             if flag:
-                self.all.append(self)
+                self.all[self.id] = self
                 break
 
     def __str__(self):
@@ -88,65 +101,69 @@ async def generate_queries():
     print(f'Got {len(Vacancy.all)} vacancies')
 
 
-def firefox_driver(obj_for_driver):
+def firefox_driver():
     driver = webdriver.Firefox()
     driver.get('https://spb.hh.ru/account/login?backurl=%2F&hhtmFrom=main')
     driver.delete_all_cookies()
     for c in cookies:
         driver.add_cookie(c)
     driver.get('https://spb.hh.ru')
-    obj_for_driver['driver'] = driver
+
+    with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cookies.txt'), 'w') as cookies_file:
+        cookies_file.write(driver.get_cookies().__str__())
+
+    obj_dict['driver'] = driver
 
 
-def send_letter(driver: webdriver.Firefox, vac: Vacancy):
+def send_letter(driver: webdriver.Firefox, vac: Vacancy) -> Union[str, bool]:
     driver.get(vac.link)
-    time.sleep(1)
     print(f'On {vac.name} page. Link: {vac.link}')
     try:
-        experience = driver.find_element(By.XPATH,
-                                         '/html/body/div[5]/div/div[3]/div[1]/div/div/div/div/div[1]/div[1]/div[1]/div/p[1]/span').text
+        button = driver.find_element(By.CSS_SELECTOR, 'a[data-qa="vacancy-response-link-top"]')
+
     except NoSuchElementException:
-        experience = driver.find_element(By.XPATH, '/html/body/div[4]/div/div[3]/div[1]/div/div/div/div/div[1]/div[1]/div[1]/div/p[1]/span').text
+        print(f'Failed! Reason: Уже откликался')
+        return 'Already responded'
 
-    try:
-        button = driver.find_element(By.XPATH,
-                                     '/html/body/div[5]/div/div[3]/div[1]/div/div/div/div/div[1]/div[1]/div[1]/div/div[3]/div[3]/div/div/a')
-    except NoSuchElementException:
-        button = driver.find_element(By.XPATH,
-                            '/html/body/div[5]/div/div[3]/div[1]/div/div/div/div/div[1]/div[1]/div[1]/div/div[3]/div[2]/div/div/a')
-
-    if button.text != "Откликнуться":
-        print(f'Failed! Reason: button == {button.text}')
-
-    elif experience != '1–3 года':
+    experience = driver.find_element(By.CSS_SELECTOR, 'span[data-qa="vacancy-experience"]')
+    if experience.text != '1–3 года':
         print(f'Failed! Reason: experience == {experience}')
+        return 'Not that experience'
 
     else:
         button.click()
-        summary = driver.find_element(By.XPATH,
-                                     '/html/body/div[15]/div/div[1]/div[2]/div[1]/form/div/div/div[2]/div[2]/div/div')
-        if summary.text != 'Программист Python':
-            summary = driver.find_element(By.XPATH, '/html/body/div[5]/div/div[3]/div[1]/div/div/div[2]/div/form/div/div[1]/div[2]/div[1]/div[1]/div/label/span')
-        summary.click()
-        letter_btn = driver.find_element(By.XPATH,
-                                         '/html/body/div[15]/div/div[1]/div[2]/div[1]/form/div/div/div[3]/button')
-        letter_btn.click()
-        driver.find_element(By.XPATH, '/html/body/div[15]/div/div[1]/div[2]/div[1]/form/div/div/textarea').send_keys(
-            letter)
-        apply = driver.find_element(By.XPATH, '/html/body/div[15]/div/div[1]/div[5]/button[2]')
-        d = 3
-        #apply.click()
+        driver.implicitly_wait(10)
+        summaries = driver.find_elements(By.CSS_SELECTOR, 'input[class="bloko-radio__input"]')
+        for summary in summaries:
+            if summary.text == Vacancy.VACANCY_FOR_SEND:
+                summary.click()
+        try:
+            letter_btn = driver.find_element(By.CSS_SELECTOR, 'button[data-qa="vacancy-response-letter-toggle"]')
+            letter_btn.click()
+            driver.implicitly_wait(10)
+            driver.find_element(By.CSS_SELECTOR, 'textarea[data-qa="vacancy-response-popup-form-letter-input"]').send_keys(
+                letter)
+            apply = driver.find_element(By.CSS_SELECTOR, 'button[data-qa="vacancy-response-submit-popup"]')
+            # apply.click()
+        except NoSuchElementException:
+            obj_dict['untypical'].append(vac)
+            print('Incomplete! Reason: untypical letter')
+            return 'Untypical letter'
+        except ElementNotInteractableException:
+            pass
+        return True
 
 
 def main():
-    obj_for_driver = {}
-    t1 = threading.Thread(target=firefox_driver, args=(obj_for_driver,))
+    t1 = threading.Thread(target=firefox_driver, args=(obj_dict,))
     t1.start()
     asyncio.run(generate_queries())
     t1.join()
-    obj_for_driver['driver'].get('https://spb.hh.ru/vacancy/78573234?from=vacancy_search_list')
-    for vac in Vacancy.all:
-        send_letter(obj_for_driver['driver'], vac)
+    for vac_id, vac in Vacancy.all.items():
+        send_letter(obj_dict['driver'], vac)
+    obj_dict['driver'].close()
+    for vac in obj_dict['untypical']:
+        print(vac, vac.link)
 
 
 if __name__ == '__main__':
