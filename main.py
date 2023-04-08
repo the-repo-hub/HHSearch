@@ -155,7 +155,7 @@ def send_letter(driver: webdriver.Firefox, vac: Vacancy) -> Union[str, bool]:
 
 
 def main():
-    t1 = threading.Thread(target=firefox_driver, args=(obj_dict,))
+    t1 = threading.Thread(target=firefox_driver)
     t1.start()
     asyncio.run(generate_queries())
     t1.join()
