@@ -40,5 +40,21 @@ class TestCase(unittest.TestCase):
         self.assertEqual(send_letter(obj_dict['driver'], vac), 'Already responded')
 
 
+class TestCaseTwo(unittest.TestCase):
+
+    def test_1(self):
+        vac = Vacancy('Backend-разработчик / Разработчик Python page.', 'https://spb.hh.ru/vacancy/77874699?from=vacancy_search_list')
+        self.assertEqual(send_letter(obj_dict['driver'], vac), 'Archived')
+
+    def test_2(self):
+        vac = Vacancy('Python разработчик веб-приложений (fullstack) page', 'https://spb.hh.ru/vacancy/78254984?from=vacancy_search_list')
+        self.assertEqual(send_letter(obj_dict['driver'], vac), 'Untypical letter')
+
+    def test_3(self):
+        vac = Vacancy('Python-developer (FastApi)', 'https://spb.hh.ru/vacancy/77848012?from=vacancy_search_list')
+        self.assertTrue(send_letter(obj_dict['driver'], vac))
+
+
 if __name__ == '__main__':
     unittest.main()
+    obj_dict['driver'].close()

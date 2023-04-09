@@ -5,10 +5,10 @@ import ast
 import bs4
 import aiohttp
 import threading
-from selenium.common.exceptions import NoSuchElementException, ElementNotInteractableException
+from selenium.common.exceptions import NoSuchElementException, ElementNotInteractableException, TimeoutException
 import os
 from typing import Union
-
+from selenium.webdriver.support.wait import WebDriverWait
 
 vacancies_url = 'https://spb.hh.ru/search/vacancy?experience=between1And3&resume=c6f3d876ff0ba2033d0039ed1f6a6f4e386247&search_field=name&search_field=company_name&search_field=description&forceFiltersSaving=true&enable_snippets=false&salary=60000&ored_clusters=true'
 headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:110.0) Gecko/20100101 Firefox/110.0'}
@@ -117,13 +117,19 @@ def firefox_driver():
 
 def send_letter(driver: webdriver.Firefox, vac: Vacancy) -> Union[str, bool]:
     driver.get(vac.link)
-    print(f'On {vac.name} page. Link: {vac.link}')
+    print(f'{vac.name} {vac.link}')
     try:
         button = driver.find_element(By.CSS_SELECTOR, 'a[data-qa="vacancy-response-link-top"]')
 
     except NoSuchElementException:
-        print(f'Failed! Reason: Уже откликался')
-        return 'Already responded'
+        try:
+            button = driver.find_element(By.CSS_SELECTOR, 'a[data-qa="vacancy-response-link-view-topic"]')
+            print(f'Failed! Reason: {button.text}')
+            return 'Already responded'
+
+        except NoSuchElementException:
+            print('Failed! Reason: Archived')
+            return 'Archived'
 
     experience = driver.find_element(By.CSS_SELECTOR, 'span[data-qa="vacancy-experience"]')
     if experience.text != '1–3 года':
@@ -132,25 +138,48 @@ def send_letter(driver: webdriver.Firefox, vac: Vacancy) -> Union[str, bool]:
 
     else:
         button.click()
-        driver.implicitly_wait(10)
-        summaries = driver.find_elements(By.CSS_SELECTOR, 'input[class="bloko-radio__input"]')
-        for summary in summaries:
-            if summary.text == Vacancy.VACANCY_FOR_SEND:
-                summary.click()
+        # сообщение с релокацией
+        try:
+            button = WebDriverWait(driver, timeout=3).until(lambda d: driver.find_element(By.CSS_SELECTOR, 'button[data-qa="relocation-warning-confirm"]'))
+            button.click()
+        except NoSuchElementException:
+            pass
+        except TimeoutException:
+            pass
+
+        # после отклика перекинуло на страницу с полями для ввода
+        try:
+            WebDriverWait(driver, timeout=3).until(
+                lambda d: driver.find_element(By.CSS_SELECTOR, 'div[data-qa="task-body"]'))
+            obj_dict['untypical'].append(vac)
+            print('Incomplete! Reason: untypical letter')
+            return 'Untypical letter'
+        except NoSuchElementException:
+            pass
+        except TimeoutException:
+            pass
+
+        # проверить выбранное резюме
+        summary_selected = WebDriverWait(driver, timeout=3).until(
+            lambda d: driver.find_element(By.CSS_SELECTOR, 'div[class="vacancy-response-popup-resume vacancy-response-popup-resume_selected"]'))
+        if summary_selected.find_element(By.TAG_NAME, 'span').text != Vacancy.VACANCY_FOR_SEND:
+            summary_selected.click()
+
         try:
             letter_btn = driver.find_element(By.CSS_SELECTOR, 'button[data-qa="vacancy-response-letter-toggle"]')
             letter_btn.click()
-            driver.implicitly_wait(10)
-            driver.find_element(By.CSS_SELECTOR, 'textarea[data-qa="vacancy-response-popup-form-letter-input"]').send_keys(
-                letter)
-            apply = driver.find_element(By.CSS_SELECTOR, 'button[data-qa="vacancy-response-submit-popup"]')
-            # apply.click()
+        except ElementNotInteractableException:
+            pass
+
         except NoSuchElementException:
             obj_dict['untypical'].append(vac)
             print('Incomplete! Reason: untypical letter')
             return 'Untypical letter'
-        except ElementNotInteractableException:
-            pass
+
+        driver.find_element(By.CSS_SELECTOR, 'textarea[data-qa="vacancy-response-popup-form-letter-input"]').send_keys(
+            letter)
+        apply = driver.find_element(By.CSS_SELECTOR, 'button[data-qa="vacancy-response-submit-popup"]')
+        # apply.click()
         return True
 
 
