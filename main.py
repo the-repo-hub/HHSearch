@@ -1,67 +1,91 @@
+import time
+
 from selenium import webdriver
 from selenium.webdriver.common.by import By
-import asyncio
 import ast
-import bs4
-import aiohttp
-import threading
 from selenium.common.exceptions import NoSuchElementException, ElementNotInteractableException, TimeoutException
 import os
 from typing import Union
 from selenium.webdriver.support.wait import WebDriverWait
+from selenium.webdriver.remote.webelement import WebElement
+import threading
 
-vacancies_url = 'https://spb.hh.ru/search/vacancy?experience=between1And3&resume=c6f3d876ff0ba2033d0039ed1f6a6f4e386247&search_field=name&search_field=company_name&search_field=description&forceFiltersSaving=true&enable_snippets=false&salary=60000&ored_clusters=true'
+
 headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:110.0) Gecko/20100101 Firefox/110.0'}
-obj_dict = {'untypical': []}
 
 
-try:
-    with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cookies.txt')) as cookies_file:
-        cookies = ast.literal_eval(cookies_file.read())
-        aiocookies = {}
+class HHDriver(webdriver.Firefox):
+    vacancies_url = 'https://spb.hh.ru/search/vacancy?experience=between1And3&resume=c6f3d876ff0ba2033d0039ed1f6a6f4e386247&search_field=name&search_field=company_name&search_field=description&forceFiltersSaving=true&enable_snippets=false&salary=60000&ored_clusters=true'
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.letter = None
+        self.pages = None
+
+        try:
+            with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cookies.txt')) as cookies_file:
+                cookies = ast.literal_eval(cookies_file.read())
+        except FileNotFoundError:
+            exit("You need to insert cookies (as selenium's .get_cookies() in cookies.txt file)!")
+        except SyntaxError:
+            exit('Invalid cookies!')
+
+        try:
+            with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'letter.txt')) as file:
+                self.letter = file.read()
+        except FileNotFoundError:
+            exit("You need write a letter and put it in letter.txt!")
+
+        self.get('https://spb.hh.ru/account/login?backurl=%2F&hhtmFrom=main')
+        self.delete_all_cookies()
         for c in cookies:
-            aiocookies[c['name']] = c['value']
-except FileNotFoundError:
-    exit("You need to insert cookies (as selenium's .get_cookies() in cookies.txt file)!")
-except SyntaxError:
-    exit('Invalid cookies!')
+            self.add_cookie(c)
+        """with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cookies.txt'), 'w') as cookies_file:
+            cookies_file.write(self.get_cookies().__str__())"""
 
-try:
-    with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'letter.txt')) as file:
-        letter = file.read()
-except FileNotFoundError:
-    exit("You need write a letter and put it in letter.txt!")
-
-
-def up_low(lst):
-    res = []
-    for string in lst:
-        res.extend([string.upper(), string.lower()])
-    return lst + res
+    def obtain_all_vacs(self):
+        self.get(self.vacancies_url)
+        self.pages = int(self.find_elements(By.CSS_SELECTOR, 'span[class="pager-item-not-in-short-range"]')[-1].text)
+        for el in self.find_elements(By.CSS_SELECTOR, 'div[data-qa="vacancy-serp__vacancy vacancy-serp__vacancy_standard"]'):
+            Vacancy(el)
+        for i in range(1, self.pages):
+            self.get(self.vacancies_url + f'&page={i}')
+            for el in self.find_elements(By.CSS_SELECTOR,
+                                         'div[data-qa="vacancy-serp__vacancy vacancy-serp__vacancy_standard"]'):
+                Vacancy(el)
 
 
 class Vacancy:
+
+    @staticmethod
+    def up_low(lst):
+        res = []
+        for string in lst:
+            res.extend([string.upper(), string.lower()])
+        return lst + res
+
     all = {}
     VACANCY_FOR_SEND = 'Программист Python'
-
     ALLOW_WORDS = up_low(['Python'])
-    DENY_WORDS = up_low(['Senior', 'Lead', 'Нейрон', 'Лид', 'Детей', 'Преподаватель', 'Наставник', 'Автор', 'Репетитор'])
+    DENY_WORDS = up_low(['Senior', 'Lead', 'Нейрон', 'Лид', 'Детей', 'Преподаватель', 'Наставник', 'Автор', 'Репетитор', 'Perl'])
 
-    def __init__(self, soup: bs4.Tag):
-        self.name = soup.find('a', class_="serp-item__title").text
-        self.link = soup.find('a', class_="serp-item__title").get('href')
+    def __init__(self, el: WebElement):
+        self.name = el.find_element(By.CSS_SELECTOR, 'a[data-qa="serp-item__title"]').text
+        self.link = el.find_element(By.CSS_SELECTOR, 'a[data-qa="serp-item__title"]').get_attribute('href')
         self.id = int(self.link.split('?')[0].split('/')[-1])
         if self.all.get(self.id):
             return
         try:
-            self.salary = soup.find('span', class_="bloko-header-section-3").text
-        except AttributeError:
+            self.salary = el.find_element(By.CSS_SELECTOR, 'span[class="bloko-header-section-3]"').text
+        except NoSuchElementException:
             self.salary = None
         try:
-            self.company = soup.find('a', class_="bloko-link_kind-tertiary").text
-        except AttributeError:
+            self.company = el.find_element(By.CSS_SELECTOR, 'a[class="bloko-link_kind-tertiary"]').text
+        except NoSuchElementException:
             self.company = None
-        self.place = soup.find('div', class_="bloko-text", attrs={'data-qa': "vacancy-serp__vacancy-address"}).text
+        self.place = el.find_element(By.CSS_SELECTOR, 'div[class="bloko-text"][data-qa="vacancy-serp__vacancy-address"]').text
+
+        self.description = None
 
         for allow in self.ALLOW_WORDS:
             flag = False
@@ -70,6 +94,7 @@ class Vacancy:
                 for deny in self.DENY_WORDS:
                     if deny in self.name:
                         flag = False
+                        break
             if flag:
                 self.all[self.id] = self
                 break
@@ -78,44 +103,7 @@ class Vacancy:
         return self.name
 
 
-async def generate_queries():
-    gather = []
-
-    async with aiohttp.ClientSession(headers=headers, cookies=aiocookies) as session:
-        first_page = await session.get(vacancies_url)
-        num = int(
-            bs4.BeautifulSoup(await first_page.text(), 'html.parser').find(attrs={'data-qa': "pager-block"}).find_all('span',
-                                                                                                               attrs={
-                                                                                                                   'class': [
-                                                                                                                       'pager-item-not-in-short-range']})[
-                -1].find('a', attrs={'data-qa': "pager-page"}).text)
-        print(f'Pages: {num}')
-        for i in range(1, num + 1):
-            gather.append(session.get(vacancies_url + f'&page={i}'))
-        gather = await asyncio.gather(*gather)
-        gather.append(first_page)
-        for g in gather:
-            vacancies = bs4.BeautifulSoup(await g.text(), 'html.parser').find_all(class_="serp-item")
-            for vac in vacancies:
-                Vacancy(vac)
-    print(f'Got {len(Vacancy.all)} vacancies')
-
-
-def firefox_driver():
-    driver = webdriver.Firefox()
-    driver.get('https://spb.hh.ru/account/login?backurl=%2F&hhtmFrom=main')
-    driver.delete_all_cookies()
-    for c in cookies:
-        driver.add_cookie(c)
-    driver.get('https://spb.hh.ru')
-
-    with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cookies.txt'), 'w') as cookies_file:
-        cookies_file.write(driver.get_cookies().__str__())
-
-    obj_dict['driver'] = driver
-
-
-def send_letter(driver: webdriver.Firefox, vac: Vacancy) -> Union[str, bool]:
+def send_letter(driver: HHDriver, vac: Vacancy) -> Union[str, bool]:
     driver.get(vac.link)
     print(f'{vac.name} {vac.link}')
     try:
@@ -151,7 +139,6 @@ def send_letter(driver: webdriver.Firefox, vac: Vacancy) -> Union[str, bool]:
         try:
             WebDriverWait(driver, timeout=3).until(
                 lambda d: driver.find_element(By.CSS_SELECTOR, 'div[data-qa="task-body"]'))
-            obj_dict['untypical'].append(vac)
             print('Incomplete! Reason: untypical letter')
             return 'Untypical letter'
         except NoSuchElementException:
@@ -172,27 +159,30 @@ def send_letter(driver: webdriver.Firefox, vac: Vacancy) -> Union[str, bool]:
             pass
 
         except NoSuchElementException:
-            obj_dict['untypical'].append(vac)
             print('Incomplete! Reason: untypical letter')
             return 'Untypical letter'
 
         driver.find_element(By.CSS_SELECTOR, 'textarea[data-qa="vacancy-response-popup-form-letter-input"]').send_keys(
-            letter)
+            driver.letter)
         apply = driver.find_element(By.CSS_SELECTOR, 'button[data-qa="vacancy-response-submit-popup"]')
         # apply.click()
         return True
 
 
+def run_checker(checker):
+    while True:
+        checker.obtain_all_vacs()
+        time.sleep(120)
+
+
 def main():
-    t1 = threading.Thread(target=firefox_driver)
-    t1.start()
-    asyncio.run(generate_queries())
-    t1.join()
-    for vac_id, vac in Vacancy.all.items():
-        send_letter(obj_dict['driver'], vac)
-    obj_dict['driver'].close()
-    for vac in obj_dict['untypical']:
-        print(vac, vac.link)
+    with HHDriver() as checker:
+        checker.obtain_all_vacs()
+        with HHDriver() as driver:
+            for vac in Vacancy.all.values():
+                send_letter(driver, vac)
+        t1 = threading.Thread(target=run_checker, args=(checker,))
+        t1.start()
 
 
 if __name__ == '__main__':
